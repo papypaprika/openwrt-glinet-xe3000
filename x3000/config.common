@@ -1,7 +1,7 @@
 # Target system - GL.INET X3000 (Spitz AX)
 CONFIG_TARGET_mediatek=y
 CONFIG_TARGET_mediatek_filogic=y
-CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-x3000=y
+CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-xe3000=y
 # Custom packages baked into the image (rest pulled from local feed post-flash)
 CONFIG_PACKAGE_adb=y
 CONFIG_PACKAGE_qfirehose=y
