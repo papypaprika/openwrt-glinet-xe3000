@@ -38,7 +38,7 @@ jobs:
 
       - name: Run prepare.sh
         run: |
-          cd x3000
+          cd xe3000
           bash prepare.sh 2>&1 | tee /tmp/prepare.log
           exit ${PIPESTATUS[0]}
 
@@ -72,9 +72,28 @@ jobs:
         run: |
           mkdir -p output
           find bin/targets/mediatek/filogic/ \
-            \( -name "*xe3000*sysupgrade*" -o -name "*xe3000*factory*" \) \
+            \( \
+              -name "*xe3000*sysupgrade*" -o \
+              -name "*xe3000*factory*"    -o \
+              -name "*xe3000*manifest"    -o \
+              -name "*xe3000*buildinfo"   -o \
+              -name "*xe3000*sha256sums"  \
+            \) \
             -exec cp {} output/ \;
           ls -lh output/
+
+      - name: Print package manifest
+        if: success()
+        run: |
+          echo "=============================="
+          echo "     PACKAGE MANIFEST"
+          echo "=============================="
+          cat output/*manifest 2>/dev/null || echo "No manifest file found"
+          echo ""
+          echo "=============================="
+          echo "     BUILD INFO (feeds)"
+          echo "=============================="
+          cat output/*feeds.buildinfo 2>/dev/null || echo "No feeds.buildinfo found"
 
       - name: Upload firmware
         if: success()
