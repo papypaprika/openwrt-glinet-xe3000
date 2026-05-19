@@ -36,15 +36,9 @@ jobs:
             python3-dev rsync unzip zlib1g-dev file wget \
             xxd swig quilt
 
-      - name: Verify prereqs against OpenWrt checker
-        run: |
-          make prereq V=s 2>&1 | tee /tmp/prereq.log || true
-          # This shows exactly which checks pass/fail before prepare.sh
-          # 'true' so we don't abort here — we want the log regardless
-
       - name: Run prepare.sh
         run: |
-          cd x3000
+          cd xe3000
           bash prepare.sh 2>&1 | tee /tmp/prepare.log
           exit ${PIPESTATUS[0]}
 
@@ -96,7 +90,6 @@ jobs:
         with:
           name: build-logs-${{ github.sha }}
           path: |
-            /tmp/prereq.log
             /tmp/prepare.log
             /tmp/feeds-update.log
             /tmp/feeds-install.log
