@@ -38,7 +38,7 @@ jobs:
 
       - name: Run prepare.sh
         run: |
-          cd xe3000
+          cd x3000
           bash prepare.sh 2>&1 | tee /tmp/prepare.log
           exit ${PIPESTATUS[0]}
 
