@@ -16,10 +16,10 @@
 
 # adb client (nmeum/android-tools port) with the bInterfaceNumber claim
 # patch needed for the RM520N's non-contiguous USB interface descriptors.
-android-tools           https://github.com/vjt/openwrt-android-tools.git           master  openwrt/android-tools
+# android-tools           https://github.com/vjt/openwrt-android-tools.git           master  openwrt/android-tools
 
 # Brotli 1.1.0 — not in 25.12 feeds, required by android-tools.
-brotli                  https://github.com/vjt/openwrt-android-tools.git           master  openwrt/brotli
+# brotli                  https://github.com/vjt/openwrt-android-tools.git           master  openwrt/brotli
 
 # qfirehose 1.4.17 (vjt fork). Upstream Quectel 1.4.11 bricks RM520N.
 qfirehose               https://github.com/vjt/qfirehose.git                       master  openwrt/qfirehose
@@ -31,4 +31,4 @@ qfirehose               https://github.com/vjt/qfirehose.git                    
 quectel-5g-tools        https://github.com/vjt/quectel-5g-tools.git                master  openwrt/quectel-5g-tools
 
 # Prometheus collector for Wi-Fi dethrash detection across the fleet.
-wifi-dethrash-collector https://github.com/vjt/openwrt-dethrash.git                master  openwrt/wifi-dethrash-collector
+# wifi-dethrash-collector https://github.com/vjt/openwrt-dethrash.git                master  openwrt/wifi-dethrash-collector
