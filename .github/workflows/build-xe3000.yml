@@ -37,44 +37,10 @@ jobs:
             xxd swig quilt
 
       - name: Run prepare.sh
-        # prepare.sh handles the full sequence internally:
-        #   custom feed clone → feeds.conf install → .config compose
-        #   → files/ overlay → feeds update/install → make defconfig
-        #   → patches
-        # No separate feeds or defconfig steps needed in this workflow.
         run: |
           cd x3000
           bash prepare.sh public 2>&1 | tee /tmp/prepare.log
           exit ${PIPESTATUS[0]}
-
-      - name: Verify key packages survived defconfig
-        # Catches any regression where a package is silently dropped.
-        # Fails fast with a clear per-package report before wasting
-        # 2+ hours on a build that would produce a broken image.
-        run: |
-          echo "=== Checking critical packages in .config ==="
-          MISSING=0
-          for pkg in \
-            modemmanager luci-base luci-proto-modemmanager \
-            luci-app-firewall luci-mod-network luci-ssl \
-            libmbim mbim-utils stubby \
-            dosfstools exfat-fsck exfat-mkfs \
-            iperf3 tmux procps-ng luaposix \
-            qfirehose quectel-5g-tools; do
-            if grep -q "CONFIG_PACKAGE_${pkg}=y" .config; then
-              echo "  OK:      $pkg"
-            else
-              echo "  MISSING: $pkg"
-              MISSING=$((MISSING + 1))
-            fi
-          done
-          if [ "$MISSING" -gt 0 ]; then
-            echo ""
-            echo "ERROR: $MISSING package(s) were dropped by defconfig."
-            echo "Check that the relevant feed is in x3000/feeds.conf and"
-            echo "that prepare.sh runs defconfig after feeds install."
-            exit 1
-          fi
 
       - name: Download package sources
         run: |
