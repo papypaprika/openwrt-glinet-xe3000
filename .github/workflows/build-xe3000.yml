@@ -1,138 +1,205 @@
 name: Build OpenWrt XE3000
 
 on:
-  push:
-    branches: [ openwrt-25.12 ]
-  workflow_dispatch:
+ push:
+   branches: [ openwrt-25.12 ]
+ workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+ FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 360
+ build:
+   runs-on: ubuntu-22.04
+   timeout-minutes: 360
 
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+   steps:
+     - name: Checkout repo
+       uses: actions/checkout@v4
 
-      - name: Free up disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android \
-                      /opt/ghc /usr/local/share/boost \
-                      /usr/local/share/powershell \
-                      /usr/share/swift
-          df -h
+     - name: Free up disk space
+       run: |
+         sudo rm -rf /usr/share/dotnet /usr/local/lib/android \
+                     /opt/ghc /usr/local/share/boost \
+                     /usr/local/share/powershell \
+                     /usr/share/swift
+         df -h
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential clang flex bison g++ gawk \
-            gcc-multilib g++-multilib gettext git \
-            libncurses-dev libncurses5-dev libssl-dev \
-            libelf-dev python3-distutils python3-setuptools \
-            python3-dev rsync unzip zlib1g-dev file wget \
-            xxd swig quilt
+     - name: Install build dependencies
+       run: |
+         sudo apt-get update
+         sudo apt-get install -y \
+           build-essential clang flex bison g++ gawk \
+           gcc-multilib g++-multilib gettext git \
+           libncurses-dev libncurses5-dev libssl-dev \
+           libelf-dev python3-distutils python3-setuptools \
+           python3-dev rsync unzip zlib1g-dev file wget \
+           xxd swig quilt
 
-      - name: Run prepare.sh
-        run: |
-          cd x3000
-          bash prepare.sh public 2>&1 | tee /tmp/prepare.log
-          exit ${PIPESTATUS[0]}
+     - name: Run prepare.sh
+       # prepare.sh handles the full sequence internally:
+       #   custom feed clone → feeds.conf install → .config compose
+       #   → files/ overlay → feeds update/install → make defconfig
+       #   → patches
+       run: |
+         cd x3000
+         bash prepare.sh public 2>&1 | tee /tmp/prepare.log
+         exit ${PIPESTATUS[0]}
 
-      - name: Force visible defconfig and inspect .config
-        # prepare.sh redirected defconfig to /dev/null, hiding which
-        # packages it dropped. Run defconfig again with full output,
-        # then dump key sections of the resulting .config so we can
-        # see exactly what survived.
-        run: |
-          echo "=========================================="
-          echo "  RUNNING make defconfig WITH FULL OUTPUT"
-          echo "=========================================="
-          make defconfig V=s 2>&1 | tee /tmp/defconfig.log
-          echo ""
-          echo "=========================================="
-          echo "  CRITICAL PACKAGE CHECK in .config"
-          echo "=========================================="
-          for pkg in modemmanager luci-base curl htop tmux dosfstools \
-                     qfirehose quectel-5g-tools dbus glib2 libmbim \
-                     procps-ng stubby luaposix iperf3 vim-full rsync; do
-            line=$(grep -E "^(CONFIG_PACKAGE_${pkg}=|# CONFIG_PACKAGE_${pkg} )" .config || echo "NOT IN .config AT ALL")
-            printf "  %-30s %s\n" "$pkg:" "$line"
-          done
-          echo ""
-          echo "=========================================="
-          echo "  ALL CONFIG_PACKAGE LINES set to =y"
-          echo "=========================================="
-          grep -c "^CONFIG_PACKAGE_.*=y" .config
-          echo "(total =y package lines)"
-          echo ""
-          echo "=========================================="
-          echo "  feeds.conf actually used"
-          echo "=========================================="
-          cat feeds.conf
+     - name: Snapshot .config state immediately after prepare.sh
+       # CRITICAL DIAGNOSTIC: This shows what prepare.sh produced
+       # BEFORE any subsequent step (including the workflow's own
+       # defconfig) has a chance to modify .config. The combination of
+       # .config state + package/feeds/ symlink presence tells us
+       # exactly which of three failure modes we're in:
+       #   A) prepare.sh defconfig was correct, later step regressed it
+       #   B) feeds installed but Kconfig hadn't refreshed when defconfig ran
+       #   C) feeds install -a never actually installed the packages
+       run: |
+         echo "=========================================="
+         echo "  .config state immediately after prepare.sh"
+         echo "  (BEFORE workflow's own defconfig runs)"
+         echo "=========================================="
+         echo "Total lines:           $(wc -l < .config)"
+         echo "CONFIG_PACKAGE_*=y:    $(grep -c '^CONFIG_PACKAGE_.*=y' .config)"
+         echo "is not set lines:      $(grep -c '^# CONFIG_PACKAGE_.* is not set' .config)"
+         echo ""
+         echo "Critical packages:"
+         for pkg in modemmanager curl htop qfirehose dosfstools luci-base \
+                    dbus glib2 libmbim stubby tmux rsync vim-full procps-ng \
+                    iperf3 luaposix bind-dig pciutils usbutils \
+                    quectel-5g-tools luci-proto-modemmanager; do
+           line=$(grep -E "^(CONFIG_PACKAGE_${pkg}=|# CONFIG_PACKAGE_${pkg} )" .config \
+                  || echo "NOT IN .config AT ALL")
+           printf "  %-30s %s\n" "$pkg" "$line"
+         done
+         echo ""
+         echo "=========================================="
+         echo "  package/feeds/ directory check"
+         echo "  (proves feeds install actually ran)"
+         echo "=========================================="
+         echo "Feeds present:"
+         ls -la package/feeds/ 2>/dev/null || echo "  package/feeds/ DOES NOT EXIST"
+         echo ""
+         echo "Sample symlinks (existence = feed package is registered):"
+         for path in \
+           "package/feeds/packages/curl" \
+           "package/feeds/packages/htop" \
+           "package/feeds/packages/dosfstools" \
+           "package/feeds/packages/glib2" \
+           "package/feeds/packages/libmbim" \
+           "package/feeds/packages/stubby" \
+           "package/feeds/luci/luci-base" \
+           "package/feeds/luci/luci-proto-modemmanager" \
+           "package/feeds/telephony/modemmanager" \
+           "package/feeds/custom/qfirehose" \
+           "package/feeds/custom/quectel-5g-tools"; do
+           if [ -e "$path" ]; then
+             echo "  PRESENT  $path"
+           else
+             echo "  MISSING  $path"
+           fi
+         done
+         echo ""
+         echo "=========================================="
+         echo "  Save snapshot for artifact upload"
+         echo "=========================================="
+         cp .config /tmp/post-prepare.config
+         ls -la package/feeds/*/  2>/dev/null | head -50 > /tmp/feed-symlinks.txt || true
 
-      - name: Download package sources
-        run: |
-          make download -j8 V=s 2>&1 | tee /tmp/download.log || true
-          make download -j1 V=s 2>&1 | tee -a /tmp/download.log
-          find dl/ -size -1024c -delete 2>/dev/null || true
+     - name: Force visible defconfig and inspect .config
+       run: |
+         echo "=========================================="
+         echo "  RUNNING make defconfig WITH FULL OUTPUT"
+         echo "=========================================="
+         make defconfig V=s 2>&1 | tee /tmp/defconfig.log
+         echo ""
+         echo "=========================================="
+         echo "  CRITICAL PACKAGE CHECK in .config"
+         echo "=========================================="
+         for pkg in modemmanager luci-base curl htop tmux dosfstools \
+                    qfirehose quectel-5g-tools dbus glib2 libmbim \
+                    procps-ng stubby luaposix iperf3 vim-full rsync; do
+           line=$(grep -E "^(CONFIG_PACKAGE_${pkg}=|# CONFIG_PACKAGE_${pkg} )" .config || echo "NOT IN .config AT ALL")
+           printf "  %-30s %s\n" "$pkg:" "$line"
+         done
+         echo ""
+         echo "=========================================="
+         echo "  ALL CONFIG_PACKAGE LINES set to =y"
+         echo "=========================================="
+         grep -c "^CONFIG_PACKAGE_.*=y" .config
+         echo "(total =y package lines)"
+         echo ""
+         echo "=========================================="
+         echo "  feeds.conf actually used"
+         echo "=========================================="
+         cat feeds.conf
 
-      - name: Build firmware
-        run: |
-          make -j$(nproc) V=s 2>&1 | tee /tmp/build.log
-          BUILD_EXIT=${PIPESTATUS[0]}
-          if [ $BUILD_EXIT -ne 0 ]; then
-            echo "Parallel build failed, retrying single-threaded..."
-            make -j1 V=s 2>&1 | tail -150 | tee /tmp/build-retry.log
-            exit 1
-          fi
+     - name: Download package sources
+       run: |
+         make download -j8 V=s 2>&1 | tee /tmp/download.log || true
+         make download -j1 V=s 2>&1 | tee -a /tmp/download.log
+         find dl/ -size -1024c -delete 2>/dev/null || true
 
-      - name: Collect firmware artifacts AND buildinfo
-        # Fix: buildinfo files are named "config.buildinfo" etc., not
-        # "*xe3000*buildinfo". Two separate find calls catch both.
-        if: success()
-        run: |
-          mkdir -p output
-          find bin/targets/mediatek/filogic/ \
-            \( -name "*xe3000*sysupgrade*" -o \
-               -name "*xe3000*factory*"    -o \
-               -name "*xe3000*manifest" \) \
-            -exec cp {} output/ \;
-          find bin/targets/mediatek/filogic/ \
-            \( -name "*.buildinfo" -o -name "sha256sums" \) \
-            -exec cp {} output/ \;
-          cp .config output/used.config
-          ls -lh output/
+     - name: Build firmware
+       run: |
+         make -j$(nproc) V=s 2>&1 | tee /tmp/build.log
+         BUILD_EXIT=${PIPESTATUS[0]}
+         if [ $BUILD_EXIT -ne 0 ]; then
+           echo "Parallel build failed, retrying single-threaded..."
+           make -j1 V=s 2>&1 | tail -150 | tee /tmp/build-retry.log
+           exit 1
+         fi
 
-      - name: Print package manifest
-        if: success()
-        run: |
-          echo "=== MANIFEST ==="
-          cat output/*manifest 2>/dev/null
-          echo ""
-          echo "=== USED .config (CONFIG_PACKAGE_* =y lines only) ==="
-          grep "^CONFIG_PACKAGE_.*=y" output/used.config | sort
+     - name: Collect firmware artifacts AND buildinfo
+       if: success()
+       run: |
+         mkdir -p output
+         find bin/targets/mediatek/filogic/ \
+           \( -name "*xe3000*sysupgrade*" -o \
+              -name "*xe3000*factory*"    -o \
+              -name "*xe3000*manifest" \) \
+           -exec cp {} output/ \;
+         find bin/targets/mediatek/filogic/ \
+           \( -name "*.buildinfo" -o -name "sha256sums" \) \
+           -exec cp {} output/ \;
+         cp .config output/used.config
+         # Include diagnostic snapshots so we can review them even on
+         # a successful build (the failure-only upload step won't run).
+         cp /tmp/post-prepare.config output/ 2>/dev/null || true
+         cp /tmp/feed-symlinks.txt output/ 2>/dev/null || true
+         cp /tmp/prepare.log output/ 2>/dev/null || true
+         cp /tmp/defconfig.log output/ 2>/dev/null || true
+         ls -lh output/
 
-      - name: Upload firmware
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-xe3000-${{ github.sha }}
-          path: output/
-          retention-days: 14
+     - name: Print package manifest
+       if: success()
+       run: |
+         echo "=== MANIFEST ==="
+         cat output/*manifest 2>/dev/null
+         echo ""
+         echo "=== USED .config (CONFIG_PACKAGE_* =y lines only) ==="
+         grep "^CONFIG_PACKAGE_.*=y" output/used.config | sort
 
-      - name: Upload all logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs-${{ github.sha }}
-          path: |
-            /tmp/prepare.log
-            /tmp/defconfig.log
-            /tmp/download.log
-            /tmp/build.log
-            /tmp/build-retry.log
-          retention-days: 7
+     - name: Upload firmware
+       if: success()
+       uses: actions/upload-artifact@v4
+       with:
+         name: openwrt-xe3000-${{ github.sha }}
+         path: output/
+         retention-days: 14
+
+     - name: Upload all logs on failure
+       if: failure()
+       uses: actions/upload-artifact@v4
+       with:
+         name: build-logs-${{ github.sha }}
+         path: |
+           /tmp/prepare.log
+           /tmp/post-prepare.config
+           /tmp/feed-symlinks.txt
+           /tmp/defconfig.log
+           /tmp/download.log
+           /tmp/build.log
+           /tmp/build-retry.log
+         retention-days: 7
