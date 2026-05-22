@@ -12,29 +12,6 @@
 #            no internal feed key, no telegraf push.
 #
 # Usage:  x3000/prepare.sh [private|public]
-#
-# What it does, idempotently:
-#   1. Clones the custom package repos listed in x3000/custom-feeds.txt
-#      into .build-deps/ (gitignored). Each repo is fetched + checked out
-#      to the pinned ref on every run.
-#   2. Creates symlinks under feeds-local/ pointing at the package
-#      subdirectory inside each clone. `feeds-local/` is what
-#      /feeds.conf's `src-link custom` references.
-#   3. Copies x3000/feeds.conf -> /feeds.conf so OpenWrt's `feeds update`
-#      sees the standard 25.12 feeds plus our custom symlinks.
-#   4. Composes /.config from x3000/config.common + x3000/config.<variant>.
-#   5. Wipes /files/ and rebuilds it from x3000/files-common/ +
-#      x3000/files-<variant>/, so swapping variants leaves no stale
-#      overlay files behind.
-#   6. Records the active variant in /.x3000-variant for build.sh and
-#      sanity checks.
-#   7. Runs `./scripts/feeds update -a && ./scripts/feeds install -a` so
-#      every Makefile is symlinked into package/feeds/.
-#   8. Runs `make defconfig` NOW, after feeds are installed, so packages
-#      from the luci/telephony/routing feeds are known and not silently
-#      dropped from .config.
-#   9. Applies x3000/patches/*.patch against feed-side files (modemmanager
-#      tty hotplug etc.).
 
 set -euo pipefail
 
@@ -187,12 +164,14 @@ echo "==> feeds install -a"
 # --- Expand .config now that all feed packages are known ------------------
 #
 # All feeds are now symlinked into package/feeds/, so luci/telephony/
-# routing packages are recognised. Any CONFIG_PACKAGE_foo=y in .config
-# that refers to a real package will be kept; unknown packages are still
-# dropped, but there should be none at this point.
+# routing packages are recognised. Output is no longer suppressed:
+# defconfig prints warnings like "PACKAGE_x depends on PACKAGE_y which
+# is not selected" whenever it drops a =y line. Those messages are the
+# only way to diagnose why a package isn't surviving defconfig, so they
+# go into the build log.
 
 echo "==> make defconfig (post-feeds)"
-make defconfig FORCE=1 >/dev/null
+make defconfig FORCE=1
 
 # --- Apply unified-diff patches against feed contents ---------------------
 
