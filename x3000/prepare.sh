@@ -117,11 +117,16 @@ sed "s|^src-link custom feeds-local\$|src-link custom $LOCAL|" \
 # --- Compose .config from common + variant --------------------------------
 #
 # NOTE: make defconfig is intentionally NOT called here. It runs after
-# feeds update + install below, so that packages from the luci/telephony/
-# routing feeds are known to the build system when defconfig expands the
-# config. Running defconfig before feeds install causes it to silently
-# drop every feed-side package (luci-*, modemmanager, libmbim, stubby,
-# etc.) from .config with no error or warning.
+# feeds update + install + tmp/ wipe below, so that:
+#   1. Packages from the luci/telephony/routing feeds are known to the
+#      build system when defconfig expands the config (feeds install).
+#   2. The package scan cache is fresh, picking up symlinks just created
+#      (rm -rf tmp/).
+# Without (2), defconfig may use a cached tmp/info/.packageinfo from a
+# prior scan that predates the symlinks, silently dropping every newly-
+# installed feed package from .config — exactly the failure mode that
+# kept luci-*, modemmanager, curl, htop and ~25 other =y selections
+# from surviving multiple prior build attempts.
 
 echo "==> Composing .config from config.common + config.$VARIANT$([ -f "$CONFIG_VARIANT_LOCAL" ] && echo " + config.$VARIANT.local")"
 {
@@ -161,17 +166,25 @@ echo "==> feeds update -a"
 echo "==> feeds install -a"
 ./scripts/feeds install -a
 
-# --- Expand .config now that all feed packages are known ------------------
+# --- Wipe stale package scan cache ----------------------------------------
 #
-# All feeds are now symlinked into package/feeds/, so luci/telephony/
-# routing packages are recognised. Output is no longer suppressed:
-# defconfig prints warnings like "PACKAGE_x depends on PACKAGE_y which
-# is not selected" whenever it drops a =y line. Those messages are the
-# only way to diagnose why a package isn't surviving defconfig, so they
-# go into the build log.
+# CRITICAL: prepare-tmpinfo (invoked transitively by make defconfig)
+# generates tmp/info/.packageinfo by scanning Makefiles under
+# package/feeds/. If tmp/ already exists from an earlier scan and its
+# timestamp is newer than the symlinks just created above, scan.mk's
+# cache check may return "up-to-date" and skip rescanning — leaving
+# the newly-installed feed packages (curl, htop, modemmanager, glib2,
+# luci-*, qfirehose, …) absent from Kconfig's package database.
+# defconfig then silently drops CONFIG_PACKAGE_*=y for those packages
+# because, as far as it knows, they don't exist.
+
+echo "==> Wiping tmp/ to force fresh package scan"
+rm -rf "$ROOT/tmp"
+
+# --- Expand .config now that all feed packages are known ------------------
 
 echo "==> make defconfig (post-feeds)"
-make defconfig FORCE=1
+make defconfig
 
 # --- Apply unified-diff patches against feed contents ---------------------
 
