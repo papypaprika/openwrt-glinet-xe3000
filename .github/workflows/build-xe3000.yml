@@ -42,6 +42,38 @@ jobs:
           bash prepare.sh public 2>&1 | tee /tmp/prepare.log
           exit ${PIPESTATUS[0]}
 
+      - name: Force visible defconfig and inspect .config
+        # prepare.sh redirected defconfig to /dev/null, hiding which
+        # packages it dropped. Run defconfig again with full output,
+        # then dump key sections of the resulting .config so we can
+        # see exactly what survived.
+        run: |
+          echo "=========================================="
+          echo "  RUNNING make defconfig WITH FULL OUTPUT"
+          echo "=========================================="
+          make defconfig V=s 2>&1 | tee /tmp/defconfig.log
+          echo ""
+          echo "=========================================="
+          echo "  CRITICAL PACKAGE CHECK in .config"
+          echo "=========================================="
+          for pkg in modemmanager luci-base curl htop tmux dosfstools \
+                     qfirehose quectel-5g-tools dbus glib2 libmbim \
+                     procps-ng stubby luaposix iperf3 vim-full rsync; do
+            line=$(grep -E "^(CONFIG_PACKAGE_${pkg}=|# CONFIG_PACKAGE_${pkg} )" .config || echo "NOT IN .config AT ALL")
+            printf "  %-30s %s\n" "$pkg:" "$line"
+          done
+          echo ""
+          echo "=========================================="
+          echo "  ALL CONFIG_PACKAGE LINES set to =y"
+          echo "=========================================="
+          grep -c "^CONFIG_PACKAGE_.*=y" .config
+          echo "(total =y package lines)"
+          echo ""
+          echo "=========================================="
+          echo "  feeds.conf actually used"
+          echo "=========================================="
+          cat feeds.conf
+
       - name: Download package sources
         run: |
           make download -j8 V=s 2>&1 | tee /tmp/download.log || true
@@ -58,33 +90,31 @@ jobs:
             exit 1
           fi
 
-      - name: Collect firmware artifacts
+      - name: Collect firmware artifacts AND buildinfo
+        # Fix: buildinfo files are named "config.buildinfo" etc., not
+        # "*xe3000*buildinfo". Two separate find calls catch both.
         if: success()
         run: |
           mkdir -p output
           find bin/targets/mediatek/filogic/ \
-            \( \
-              -name "*xe3000*sysupgrade*" -o \
-              -name "*xe3000*factory*"    -o \
-              -name "*xe3000*manifest"    -o \
-              -name "*xe3000*buildinfo"   -o \
-              -name "*xe3000*sha256sums"  \
-            \) \
+            \( -name "*xe3000*sysupgrade*" -o \
+               -name "*xe3000*factory*"    -o \
+               -name "*xe3000*manifest" \) \
             -exec cp {} output/ \;
+          find bin/targets/mediatek/filogic/ \
+            \( -name "*.buildinfo" -o -name "sha256sums" \) \
+            -exec cp {} output/ \;
+          cp .config output/used.config
           ls -lh output/
 
       - name: Print package manifest
         if: success()
         run: |
-          echo "=============================="
-          echo "     PACKAGE MANIFEST"
-          echo "=============================="
-          cat output/*manifest 2>/dev/null || echo "No manifest found"
+          echo "=== MANIFEST ==="
+          cat output/*manifest 2>/dev/null
           echo ""
-          echo "=============================="
-          echo "     FEEDS BUILD INFO"
-          echo "=============================="
-          cat output/*feeds.buildinfo 2>/dev/null || echo "No feeds.buildinfo found"
+          echo "=== USED .config (CONFIG_PACKAGE_* =y lines only) ==="
+          grep "^CONFIG_PACKAGE_.*=y" output/used.config | sort
 
       - name: Upload firmware
         if: success()
@@ -101,6 +131,7 @@ jobs:
           name: build-logs-${{ github.sha }}
           path: |
             /tmp/prepare.log
+            /tmp/defconfig.log
             /tmp/download.log
             /tmp/build.log
             /tmp/build-retry.log
