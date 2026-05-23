@@ -42,72 +42,27 @@ jobs:
           bash prepare.sh public 2>&1 | tee /tmp/prepare.log
           exit ${PIPESTATUS[0]}
 
-      - name: Check what defconfig actually depends on
+      - name: Verify critical packages are =y in .config
         run: |
-          echo "=== Existence of tmp/info/.packageinfo ==="
-          ls -la tmp/info/ 2>/dev/null || echo "  tmp/info/ does not exist"
-          echo ""
-          echo "=== Does .packageinfo know about curl? ==="
-          grep -c "^Package: curl\$" tmp/info/.packageinfo 2>/dev/null || echo "  not present or file missing"
-          echo ""
-          echo "=== Does .packageinfo know about modemmanager? ==="
-          grep -c "^Package: modemmanager\$" tmp/info/.packageinfo 2>/dev/null || echo "  not present or file missing"
-          echo ""
-          echo "=== Force rebuild of packageinfo and check again ==="
-          rm -rf tmp/
-          make prepare-tmpinfo
-          ls -la tmp/info/ 2>/dev/null
-          grep -c "^Package: curl\$" tmp/info/.packageinfo || echo "  STILL not present"
-          grep -c "^Package: modemmanager\$" tmp/info/.packageinfo || echo "  STILL not present"
-          echo ""
-          echo "=== Verify symlinks BEFORE re-defconfig ==="
-          for path in \
-            "package/feeds/packages/curl/Makefile" \
-            "package/feeds/packages/modemmanager/Makefile" \
-            "package/feeds/packages/htop/Makefile" \
-            "package/feeds/custom/qfirehose/Makefile"; do
-            if [ -f "$path" ]; then
-              echo "  PRESENT  $path"
+          echo "=== Critical packages in .config after prepare.sh ==="
+          MISSING=0
+          for pkg in modemmanager luci-base curl htop tmux dosfstools \
+                     qfirehose quectel-5g-tools dbus glib2 libmbim \
+                     procps-ng stubby luaposix iperf3 vim-full rsync \
+                     bind-dig pciutils usbutils luci-proto-modemmanager; do
+            if grep -q "^CONFIG_PACKAGE_${pkg}=y" .config; then
+              echo "  OK:      $pkg"
             else
-              echo "  MISSING  $path"
+              echo "  MISSING: $pkg"
+              MISSING=$((MISSING + 1))
             fi
           done
           echo ""
-          echo "=== Now re-run defconfig and check key packages ==="
-          # Re-inject the =y lines that may have been dropped, then defconfig.
-          cat x3000/config.common > .config.fresh
-          echo "" >> .config.fresh
-          echo "# --- variant: public ---" >> .config.fresh
-          cat x3000/config.public >> .config.fresh
-          mv .config.fresh .config
-          make defconfig 2>&1 | tail -10
-          echo ""
-          echo "=== Result for critical packages ==="
-          for pkg in modemmanager curl htop qfirehose dosfstools luci-base; do
-            grep -E "^(CONFIG_PACKAGE_${pkg}=|# CONFIG_PACKAGE_${pkg} )" .config || echo "  $pkg: not in .config"
-          done
-
-      - name: Snapshot .config state immediately after prepare.sh
-        run: |
-          echo "=========================================="
-          echo "  .config state after diagnostic re-defconfig"
-          echo "=========================================="
-          echo "Total lines:           $(wc -l < .config)"
-          echo "CONFIG_PACKAGE_*=y:    $(grep -c '^CONFIG_PACKAGE_.*=y' .config)"
-          echo "is not set lines:      $(grep -c '^# CONFIG_PACKAGE_.* is not set' .config)"
-          cp .config /tmp/post-prepare.config
-
-      - name: Force visible defconfig
-        run: |
-          make defconfig V=s 2>&1 | tee /tmp/defconfig.log
-          echo ""
-          echo "=== Final CRITICAL PACKAGE CHECK in .config ==="
-          for pkg in modemmanager luci-base curl htop tmux dosfstools \
-                     qfirehose quectel-5g-tools dbus glib2 libmbim \
-                     procps-ng stubby luaposix iperf3 vim-full rsync; do
-            line=$(grep -E "^(CONFIG_PACKAGE_${pkg}=|# CONFIG_PACKAGE_${pkg} )" .config || echo "NOT IN .config AT ALL")
-            printf "  %-30s %s\n" "$pkg:" "$line"
-          done
+          echo "Total CONFIG_PACKAGE_*=y: $(grep -c '^CONFIG_PACKAGE_.*=y' .config)"
+          if [ "$MISSING" -gt 0 ]; then
+            echo "ERROR: $MISSING package(s) dropped — prepare.sh's double-defconfig fix did not work."
+            exit 1
+          fi
 
       - name: Download package sources
         run: |
@@ -138,9 +93,7 @@ jobs:
             \( -name "*.buildinfo" -o -name "sha256sums" \) \
             -exec cp {} output/ \;
           cp .config output/used.config
-          cp /tmp/post-prepare.config output/ 2>/dev/null || true
           cp /tmp/prepare.log output/ 2>/dev/null || true
-          cp /tmp/defconfig.log output/ 2>/dev/null || true
           ls -lh output/
 
       - name: Print package manifest
@@ -164,8 +117,6 @@ jobs:
           name: build-logs-${{ github.sha }}
           path: |
             /tmp/prepare.log
-            /tmp/post-prepare.config
-            /tmp/defconfig.log
             /tmp/download.log
             /tmp/build.log
             /tmp/build-retry.log
