@@ -1,17 +1,7 @@
 #!/usr/bin/env bash
 #
 # x3000/prepare.sh — set up the OpenWrt build tree to produce a GL-X3000
-# image. Two variants are supported:
-#
-#   private  bad.ass fleet image — telegraf-full pushing to
-#            metrics.bad.ass, internal CA, signed-feed pubkey.
-#            (Default; preserves the historical behaviour.)
-#
-#   public   no bad.ass extras — same hardware enablement (modem stack,
-#            quectel-5g-tools, adb, LuCI bundle) but no internal CA,
-#            no internal feed key, no telegraf push.
-#
-# Usage:  x3000/prepare.sh [private|public]
+# image. Two variants are supported: private | public.
 
 set -euo pipefail
 
@@ -54,6 +44,22 @@ for d in "$FILES_COMMON" "$FILES_VARIANT"; do
     [[ -d "$d" ]] || { echo "missing $d" >&2; exit 1; }
 done
 
+# --- Helper: compose .config from config.common + variant + local --------
+
+compose_config() {
+    {
+        cat "$CONFIG_COMMON"
+        echo
+        echo "# --- variant: $VARIANT ---"
+        cat "$CONFIG_VARIANT"
+        if [[ -f "$CONFIG_VARIANT_LOCAL" ]]; then
+            echo
+            echo "# --- variant: $VARIANT.local ---"
+            cat "$CONFIG_VARIANT_LOCAL"
+        fi
+    } > "$ROOT/.config"
+}
+
 # --- Clone / refresh custom repos and link them into feeds-local/ ---------
 
 echo "==> Refreshing custom package repos"
@@ -62,8 +68,8 @@ process_feed_list() {
     local list="$1"
     while IFS= read -r raw_line; do
         line="${raw_line%%#*}"
-        line="${line#"${line%%[![:space:]]*}"}"   # ltrim
-        line="${line%"${line##*[![:space:]]}"}"   # rtrim
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
         [[ -z "$line" ]] && continue
 
         read -r name url ref subdir <<< "$line"
@@ -114,32 +120,10 @@ echo "==> Installing feeds.conf"
 sed "s|^src-link custom feeds-local\$|src-link custom $LOCAL|" \
     "$FEEDS_CONF_SRC" > "$ROOT/feeds.conf"
 
-# --- Compose .config from common + variant --------------------------------
-#
-# NOTE: make defconfig is intentionally NOT called here. It runs after
-# feeds update + install + tmp/ wipe below, so that:
-#   1. Packages from the luci/telephony/routing feeds are known to the
-#      build system when defconfig expands the config (feeds install).
-#   2. The package scan cache is fresh, picking up symlinks just created
-#      (rm -rf tmp/).
-# Without (2), defconfig may use a cached tmp/info/.packageinfo from a
-# prior scan that predates the symlinks, silently dropping every newly-
-# installed feed package from .config — exactly the failure mode that
-# kept luci-*, modemmanager, curl, htop and ~25 other =y selections
-# from surviving multiple prior build attempts.
+# --- Compose .config from common + variant (first pass) -------------------
 
-echo "==> Composing .config from config.common + config.$VARIANT$([ -f "$CONFIG_VARIANT_LOCAL" ] && echo " + config.$VARIANT.local")"
-{
-    cat "$CONFIG_COMMON"
-    echo
-    echo "# --- variant: $VARIANT ---"
-    cat "$CONFIG_VARIANT"
-    if [[ -f "$CONFIG_VARIANT_LOCAL" ]]; then
-        echo
-        echo "# --- variant: $VARIANT.local ---"
-        cat "$CONFIG_VARIANT_LOCAL"
-    fi
-} > "$ROOT/.config"
+echo "==> Composing .config (initial)"
+compose_config
 
 # --- Compose files/ overlay from files-common + files-<variant> ----------
 
@@ -166,24 +150,16 @@ echo "==> feeds update -a"
 echo "==> feeds install -a"
 ./scripts/feeds install -a
 
-# --- Wipe stale package scan cache ----------------------------------------
-#
-# CRITICAL: prepare-tmpinfo (invoked transitively by make defconfig)
-# generates tmp/info/.packageinfo by scanning Makefiles under
-# package/feeds/. If tmp/ already exists from an earlier scan and its
-# timestamp is newer than the symlinks just created above, scan.mk's
-# cache check may return "up-to-date" and skip rescanning — leaving
-# the newly-installed feed packages (curl, htop, modemmanager, glib2,
-# luci-*, qfirehose, …) absent from Kconfig's package database.
-# defconfig then silently drops CONFIG_PACKAGE_*=y for those packages
-# because, as far as it knows, they don't exist.
+# --- Wipe stale package scan cache (forces fresh prepare-tmpinfo) -------
 
 echo "==> Wiping tmp/ to force fresh package scan"
 rm -rf "$ROOT/tmp"
 
-# --- Expand .config now that all feed packages are known ------------------
+# --- First defconfig (post-feeds) -----------------------------------------
+# This pass drops most feed-side =y selections because of an OpenWrt
+# package-scan timing quirk (see CRITICAL note below).
 
-echo "==> make defconfig (post-feeds)"
+echo "==> make defconfig (first pass)"
 make defconfig
 
 # --- Apply unified-diff patches against feed contents ---------------------
@@ -205,6 +181,31 @@ if [[ -d "$PATCH_DIR" ]]; then
         fi
     done
 fi
+
+# --- CRITICAL: re-inject .config and re-run defconfig --------------------
+#
+# Empirically proven: after the first `make defconfig` runs above, ~77
+# CONFIG_PACKAGE_*=y selections from config.common (luci-base, curl, htop,
+# modemmanager, qfirehose, …) end up flipped to "# is not set" despite
+# every package symlink being present in package/feeds/ and tmp/info/
+# containing valid .packageinfo-feeds_<feed>_<pkg> files for them.
+#
+# The cause appears to be a chicken-and-egg in OpenWrt's package-scan:
+# the first defconfig run after feeds install reads stale package info
+# from a tmp/ that was partially populated during scan, drops unrecognised
+# selections, and rewrites .config. Re-composing .config from source and
+# running defconfig once more — now with tmp/info/ fully populated —
+# accepts every selection.
+#
+# This double-defconfig pattern was validated in CI by an in-line
+# diagnostic: CONFIG_PACKAGE_*=y went from 232 (after first defconfig)
+# to 309 (after re-inject + second defconfig).
+
+echo "==> Re-composing .config from source"
+compose_config
+
+echo "==> make defconfig (second pass — picks up feed packages)"
+make defconfig
 
 echo
 echo "Done. variant=$VARIANT"
