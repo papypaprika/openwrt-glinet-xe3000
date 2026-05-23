@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
 #
 # x3000/prepare.sh — set up the OpenWrt build tree to produce a GL-X3000
-# image. Two variants are supported: private | public.
+# image. Two variants are supported:
+#
+#   private  bad.ass fleet image — telegraf-full pushing to
+#            metrics.bad.ass, internal CA, signed-feed pubkey.
+#            (Default; preserves the historical behaviour.)
+#
+#   public   no bad.ass extras — same hardware enablement (modem stack,
+#            quectel-5g-tools, adb, LuCI bundle) but no internal CA,
+#            no internal feed key, no telegraf push.
+#
+# Usage:  x3000/prepare.sh [private|public]
 
 set -euo pipefail
 
@@ -44,8 +54,7 @@ for d in "$FILES_COMMON" "$FILES_VARIANT"; do
     [[ -d "$d" ]] || { echo "missing $d" >&2; exit 1; }
 done
 
-# --- Helper: compose .config from config.common + variant + local --------
-
+# Compose .config from config.common + variant + optional .local overrides.
 compose_config() {
     {
         cat "$CONFIG_COMMON"
@@ -114,18 +123,12 @@ if [[ -f "$FEEDS_LIST_LOCAL" ]]; then
     process_feed_list "$FEEDS_LIST_LOCAL"
 fi
 
-# --- Drop the build-host feeds.conf in place ------------------------------
-
 echo "==> Installing feeds.conf"
 sed "s|^src-link custom feeds-local\$|src-link custom $LOCAL|" \
     "$FEEDS_CONF_SRC" > "$ROOT/feeds.conf"
 
-# --- Compose .config from common + variant (first pass) -------------------
-
 echo "==> Composing .config (initial)"
 compose_config
-
-# --- Compose files/ overlay from files-common + files-<variant> ----------
 
 echo "==> Composing files/ from files-common + files-$VARIANT"
 rm -rf "$ROOT/files"
@@ -133,11 +136,7 @@ mkdir -p "$ROOT/files"
 rsync -a --exclude='.gitkeep' "$FILES_COMMON"/ "$ROOT/files/"
 rsync -a --exclude='.gitkeep' "$FILES_VARIANT"/ "$ROOT/files/"
 
-# --- Record the variant ---------------------------------------------------
-
 echo "$VARIANT" > "$VARIANT_MARKER"
-
-# --- feeds update + install -----------------------------------------------
 
 for feeddir in "$ROOT"/feeds/*; do
     [[ -d "$feeddir/.git" ]] || continue
@@ -149,15 +148,6 @@ echo "==> feeds update -a"
 
 echo "==> feeds install -a"
 ./scripts/feeds install -a
-
-# --- Wipe stale package scan cache (forces fresh prepare-tmpinfo) -------
-
-echo "==> Wiping tmp/ to force fresh package scan"
-rm -rf "$ROOT/tmp"
-
-# --- First defconfig (post-feeds) -----------------------------------------
-# This pass drops most feed-side =y selections because of an OpenWrt
-# package-scan timing quirk (see CRITICAL note below).
 
 echo "==> make defconfig (first pass)"
 make defconfig
@@ -182,29 +172,17 @@ if [[ -d "$PATCH_DIR" ]]; then
     done
 fi
 
-# --- CRITICAL: re-inject .config and re-run defconfig --------------------
+# --- Re-inject .config and re-run defconfig (THE FIX) ---------------------
 #
-# Empirically proven: after the first `make defconfig` runs above, ~77
-# CONFIG_PACKAGE_*=y selections from config.common (luci-base, curl, htop,
-# modemmanager, qfirehose, …) end up flipped to "# is not set" despite
-# every package symlink being present in package/feeds/ and tmp/info/
-# containing valid .packageinfo-feeds_<feed>_<pkg> files for them.
-#
-# The cause appears to be a chicken-and-egg in OpenWrt's package-scan:
-# the first defconfig run after feeds install reads stale package info
-# from a tmp/ that was partially populated during scan, drops unrecognised
-# selections, and rewrites .config. Re-composing .config from source and
-# running defconfig once more — now with tmp/info/ fully populated —
-# accepts every selection.
-#
-# This double-defconfig pattern was validated in CI by an in-line
-# diagnostic: CONFIG_PACKAGE_*=y went from 232 (after first defconfig)
-# to 309 (after re-inject + second defconfig).
+# The first `make defconfig` above drops ~77 CONFIG_PACKAGE_*=y selections
+# from config.common (luci-base, curl, htop, modemmanager, qfirehose, …)
+# because it runs before OpenWrt's package scan has fully indexed the
+# freshly-installed feed packages. Re-composing .config and running
+# defconfig a second time — now with tmp/info/ fully populated — accepts
+# every selection.
 
-echo "==> Re-composing .config from source"
+echo "==> Re-composing .config and running defconfig (second pass)"
 compose_config
-
-echo "==> make defconfig (second pass — picks up feed packages)"
 make defconfig
 
 echo
