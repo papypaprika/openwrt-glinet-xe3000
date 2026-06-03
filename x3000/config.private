@@ -6,4 +6,3 @@
 # telegraf.conf (inputs.dns_query etc.) doesn't blow up the parser. Pushes
 # metrics to metrics.bad.ass, which only works inside the home network,
 # so this is private-only.
-CONFIG_PACKAGE_telegraf-full=y
