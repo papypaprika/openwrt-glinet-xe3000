@@ -8,7 +8,7 @@ config global
 
 config mount 'sdcard'
 	option enabled '1'
-	option device '/dev/sda1'
+	option device '/dev/sda2'
 	option target '/mnt/sdcard'
 	option fstype 'ext4'
 	option options 'rw,relatime'
