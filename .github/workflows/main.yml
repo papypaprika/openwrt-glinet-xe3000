@@ -2,7 +2,7 @@ name: Build OpenWrt XE3000-v1
 
 on:
   push:
-    branches: [ openwrt-25.12-v1 ]
+    branches: [ OpenWRT-25.12-v1 ]
   workflow_dispatch:
 
 jobs:
