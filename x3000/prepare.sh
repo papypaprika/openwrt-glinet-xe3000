@@ -172,25 +172,29 @@ echo "==> Installing feeds.conf"
 sed "s|^src-link custom feeds-local\$|src-link custom $LOCAL|" \
     "$FEEDS_CONF_SRC" > "$ROOT/feeds.conf"
 
+# Compose .config from common + variant + optional per-builder overrides.
+compose_config() {
+    echo "==> Composing .config from config.common + config.$VARIANT$([ -f "$CONFIG_VARIANT_LOCAL" ] && echo " + config.$VARIANT.local")"
+    {
+        cat "$CONFIG_COMMON"
+        echo
+        echo "# --- variant: $VARIANT ---"
+        cat "$CONFIG_VARIANT"
+        # Per-builder additions: x3000/config.<variant>.local is a gitignored
+        # slot for CONFIG_PACKAGE_… selections specific to your private build
+        # (e.g. private packages from custom-feeds.<variant>.local, or extra
+        # tooling you don't want in the public image).
+        if [[ -f "$CONFIG_VARIANT_LOCAL" ]]; then
+            echo
+            echo "# --- variant: $VARIANT.local ---"
+            cat "$CONFIG_VARIANT_LOCAL"
+        fi
+    } > "$ROOT/.config"
+}
+
 # --- Compose .config from common + variant --------------------------------
 
-echo "==> Composing .config from config.common + config.$VARIANT$([ -f "$CONFIG_VARIANT_LOCAL" ] && echo " + config.$VARIANT.local")"
-{
-    cat "$CONFIG_COMMON"
-    echo
-    echo "# --- variant: $VARIANT ---"
-    cat "$CONFIG_VARIANT"
-    # Per-builder additions: x3000/config.<variant>.local is a gitignored
-    # slot for CONFIG_PACKAGE_… selections specific to your private build
-    # (e.g. private packages from custom-feeds.<variant>.local, or extra
-    # tooling you don't want in the public image).
-    if [[ -f "$CONFIG_VARIANT_LOCAL" ]]; then
-        echo
-        echo "# --- variant: $VARIANT.local ---"
-        cat "$CONFIG_VARIANT_LOCAL"
-    fi
-} > "$ROOT/.config"
-make defconfig FORCE=1 >/dev/null
+compose_config
 
 # --- Compose files/ overlay from files-common + files-<variant> ----------
 
@@ -234,6 +238,11 @@ echo "==> feeds update -a"
 echo "==> feeds install -a"
 ./scripts/feeds install -a
 
+# The first defconfig pass runs only after feeds have been updated and
+# installed, so feed package symbols are available to Kconfig.
+echo "==> make defconfig (first pass)"
+make defconfig FORCE=1 >/dev/null
+
 # --- Apply unified-diff patches against feed contents ---------------------
 #
 # OpenWrt's quilt-based patch system applies to upstream package SOURCES,
@@ -268,6 +277,13 @@ if [[ -d "$PATCH_DIR" ]]; then
         fi
     done
 fi
+
+# This second pass is intentional. Recompose the requested selections after
+# feed installation, then run defconfig again so selections missed by the
+# first pass can be accepted now that the package metadata is available.
+echo "==> Re-composing .config and running defconfig (second pass)"
+compose_config
+make defconfig FORCE=1 >/dev/null
 
 echo
 echo "Done. variant=$VARIANT"
