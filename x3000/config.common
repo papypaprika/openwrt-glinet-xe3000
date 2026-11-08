@@ -1,12 +1,12 @@
-# Target system - GL.INET X3000 (Spitz AX)
+# Target system - GL.INET XE3000 (Spitz AX)
 CONFIG_TARGET_mediatek=y
 CONFIG_TARGET_mediatek_filogic=y
-CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-x3000=y
+CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-xe3000=y
 # Custom packages baked into the image (rest pulled from local feed post-flash)
-CONFIG_PACKAGE_adb=y
+CONFIG_PACKAGE_adb=n
 CONFIG_PACKAGE_qfirehose=y
 CONFIG_PACKAGE_quectel-5g-tools=y
-CONFIG_PACKAGE_wifi-dethrash-collector=y
+CONFIG_PACKAGE_wifi-dethrash-collector=n
 # Use Go pre-installed in Dockerfile.trunk; the in-tree golang-bootstrap
 # can't compile on linux/arm64 hosts.
 CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/usr/local/go"
@@ -125,11 +125,11 @@ CONFIG_PACKAGE_strace=y
 CONFIG_PACKAGE_rsync=y
 CONFIG_PACKAGE_tmux=y
 # Prometheus
-CONFIG_PACKAGE_prometheus-node-exporter-lua=y
-CONFIG_PACKAGE_prometheus-node-exporter-lua-netstat=y
-CONFIG_PACKAGE_prometheus-node-exporter-lua-openwrt=y
-CONFIG_PACKAGE_prometheus-node-exporter-lua-wifi=y
-CONFIG_PACKAGE_prometheus-node-exporter-lua-wifi_stations=y
+CONFIG_PACKAGE_prometheus-node-exporter-lua=n
+CONFIG_PACKAGE_prometheus-node-exporter-lua-netstat=n
+CONFIG_PACKAGE_prometheus-node-exporter-lua-openwrt=n
+CONFIG_PACKAGE_prometheus-node-exporter-lua-wifi=n
+CONFIG_PACKAGE_prometheus-node-exporter-lua-wifi_stations=n
 # DNS
 CONFIG_PACKAGE_dnsmasq-full=y
 # Wireless - add full wpad for 802.11r
@@ -154,3 +154,12 @@ CONFIG_FEED_custom=m
 # one kernel config per commit, so any build of this tree matches the
 # release built from the same commit.
 CONFIG_ALL_KMODS=y
+
+CONFIG_PACKAGE_stubby=y
+CONFIG_PACKAGE_kmod-fs-ntfs3=y
+CONFIG_PACKAGE_kmod-nls-base=y
+CONFIG_PACKAGE_kmod-hwmon-core=y
+CONFIG_PACKAGE_openssh-client=y
+CONFIG_PACKAGE_msmtp=y
+CONFIG_PACKAGE_msmtp-mta=y
+CONFIG_PACKAGE_mosquitto-client-nossl=y
